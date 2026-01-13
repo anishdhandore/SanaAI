@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+backend/.env
+
+# Resume files (optional - remove if you want to track them)
+resumes/*.tex
+resumes/*.pdf
+resumes/*.txt
+!resumes/README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Chrome Extension (if building)
+*.crx
+*.pem
