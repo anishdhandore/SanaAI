@@ -1,89 +1,158 @@
-// Popup script for SanaAI Job Assistant
+// Overlay script for SanaAI Job Assistant - Persistent window version
 
 let resumeData = null;
 let jobDescription = null;
 let rewrittenResume = null;
 let resumeFormat = 'text'; // 'text' or 'latex'
 let isLaTeX = false;
+let isMinimized = false;
 
-// Load saved backend URL and resume
-chrome.storage.local.get(['backendUrl', 'savedResume', 'savedResumeFormat'], async (result) => {
+// Window controls
+document.querySelector('.window-btn.minimize').addEventListener('click', () => {
+  isMinimized = !isMinimized;
+  document.body.classList.toggle('minimized', isMinimized);
+  chrome.storage.local.set({ overlayMinimized: isMinimized });
+});
+
+document.querySelector('.window-btn.maximize').addEventListener('click', () => {
+  // Toggle between normal and maximized size
+  chrome.storage.local.get(['overlayWidth', 'overlayHeight'], (result) => {
+    const currentWidth = result.overlayWidth || 400;
+    const currentHeight = result.overlayHeight || 600;
+    
+    if (currentWidth === 400) {
+      // Maximize
+      chrome.storage.local.set({ overlayWidth: 600, overlayHeight: 800 });
+      chrome.runtime.sendMessage({ action: 'resizeOverlay', width: 600, height: 800 });
+    } else {
+      // Restore
+      chrome.storage.local.set({ overlayWidth: 400, overlayHeight: 600 });
+      chrome.runtime.sendMessage({ action: 'resizeOverlay', width: 400, height: 600 });
+    }
+  });
+});
+
+document.querySelector('.window-btn.close').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ action: 'closeOverlay' });
+});
+
+// Save state periodically to preserve progress
+function saveState() {
+  chrome.storage.local.set({
+    overlayResumeData: resumeData,
+    overlayJobDescription: jobDescription,
+    overlayRewrittenResume: rewrittenResume,
+    overlayResumeFormat: resumeFormat,
+    overlayIsLaTeX: isLaTeX
+  });
+}
+
+// Load saved state on startup
+chrome.storage.local.get([
+  'backendUrl', 'savedResume', 'savedResumeFormat',
+  'overlayResumeData', 'overlayJobDescription', 'overlayRewrittenResume',
+  'overlayResumeFormat', 'overlayIsLaTeX', 'overlayMinimized'
+], async (result) => {
+  // Restore minimized state
+  if (result.overlayMinimized) {
+    isMinimized = true;
+    document.body.classList.add('minimized');
+  }
+  
+  // Restore data
+  if (result.overlayResumeData) {
+    resumeData = result.overlayResumeData;
+    resumeFormat = result.overlayResumeFormat || 'text';
+    isLaTeX = result.overlayIsLaTeX || false;
+  }
+  if (result.overlayJobDescription) {
+    jobDescription = result.overlayJobDescription;
+    document.getElementById('jdStatus').className = 'status success';
+    document.getElementById('jdStatus').textContent = `Job description loaded (${jobDescription.length} chars)`;
+  }
+  if (result.overlayRewrittenResume) {
+    rewrittenResume = result.overlayRewrittenResume;
+  }
+  
   const backendUrl = result.backendUrl || 'http://localhost:8000';
   if (result.backendUrl) {
     document.getElementById('backendUrl').value = result.backendUrl;
   }
   
-  // Try to load original resume from backend first
-  const statusEl = document.getElementById('resumeStatus');
-  statusEl.className = 'status info';
-  statusEl.textContent = 'Loading original resume...';
-  
-  try {
-    const response = await fetch(`${backendUrl}/get-original-resume`);
-    if (response.ok) {
-      const data = await response.json();
-      resumeData = data.resume;
-      resumeFormat = data.format;
-      isLaTeX = resumeFormat === 'latex';
-      
-      // Save to storage
-      chrome.storage.local.set({
-        savedResume: resumeData,
-        savedResumeFormat: resumeFormat
-      });
-      
-      statusEl.className = 'status success';
-      const folderInfo = data.folder ? ` from ${data.folder}/` : '';
-      statusEl.textContent = `Original resume loaded: ${data.filename}${folderInfo} (${resumeFormat.toUpperCase()})`;
-      
-      // Show/hide LaTeX section
-      const latexSection = document.getElementById('latexSection');
-      if (isLaTeX) {
-        latexSection.style.display = 'block';
-      }
-    } else {
-      // Get error details
-      const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-      console.error('Backend error:', errorData);
-      // Fallback to saved resume if original not found
-      if (result.savedResume) {
-        resumeData = result.savedResume;
-        resumeFormat = result.savedResumeFormat || 'text';
+  // Try to load original resume from backend first (if not already loaded)
+  if (!resumeData) {
+    const statusEl = document.getElementById('resumeStatus');
+    statusEl.className = 'status info';
+    statusEl.textContent = 'Loading original resume...';
+    
+    try {
+      const response = await fetch(`${backendUrl}/get-original-resume`);
+      if (response.ok) {
+        const data = await response.json();
+        resumeData = data.resume;
+        resumeFormat = data.format;
         isLaTeX = resumeFormat === 'latex';
         
-        statusEl.className = 'status info';
-        statusEl.textContent = `Using saved resume (${resumeFormat.toUpperCase()}). Place resume in resumes/original/ for auto-load.`;
+        // Save to storage
+        chrome.storage.local.set({
+          savedResume: resumeData,
+          savedResumeFormat: resumeFormat
+        });
+        saveState();
         
+        statusEl.className = 'status success';
+        const folderInfo = data.folder ? ` from ${data.folder}/` : '';
+        statusEl.textContent = `Original resume loaded: ${data.filename}${folderInfo} (${resumeFormat.toUpperCase()})`;
+        
+        // Show/hide LaTeX section
         const latexSection = document.getElementById('latexSection');
         if (isLaTeX) {
           latexSection.style.display = 'block';
         }
       } else {
-        statusEl.className = 'status error';
-        const errorText = errorData.detail || response.statusText || 'Unknown error';
-        statusEl.textContent = `Backend error (${response.status}): ${errorText}. Check: ${backendUrl}/get-original-resume`;
-        console.error('Backend response error:', response.status, errorData);
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        if (result.savedResume) {
+          resumeData = result.savedResume;
+          resumeFormat = result.savedResumeFormat || 'text';
+          isLaTeX = resumeFormat === 'latex';
+          
+          statusEl.className = 'status info';
+          statusEl.textContent = `Using saved resume (${resumeFormat.toUpperCase()})`;
+          
+          const latexSection = document.getElementById('latexSection');
+          if (isLaTeX) {
+            latexSection.style.display = 'block';
+          }
+        } else {
+          statusEl.className = 'status error';
+          statusEl.textContent = `Backend error: ${errorData.detail || response.statusText}`;
+        }
+      }
+    } catch (error) {
+      if (result.savedResume) {
+        resumeData = result.savedResume;
+        resumeFormat = result.savedResumeFormat || 'text';
+        isLaTeX = resumeFormat === 'latex';
+        
+        const statusEl = document.getElementById('resumeStatus');
+        statusEl.className = 'status info';
+        statusEl.textContent = `Using saved resume (${resumeFormat.toUpperCase()})`;
+        
+        const latexSection = document.getElementById('latexSection');
+        if (isLaTeX) {
+          latexSection.style.display = 'block';
+        }
       }
     }
-  } catch (error) {
-    console.error('Extension error loading resume:', error);
-    // Fallback to saved resume
-    if (result.savedResume) {
-      resumeData = result.savedResume;
-      resumeFormat = result.savedResumeFormat || 'text';
-      isLaTeX = resumeFormat === 'latex';
-      
-      statusEl.className = 'status info';
-      statusEl.textContent = `Using saved resume (${resumeFormat.toUpperCase()})`;
-      
-      const latexSection = document.getElementById('latexSection');
-      if (isLaTeX) {
-        latexSection.style.display = 'block';
-      }
-    } else {
-      statusEl.className = 'status error';
-      statusEl.textContent = `Could not load resume. Error: ${error.message}. Check backend at ${backendUrl}/get-original-resume`;
-      console.error('Fetch error:', error);
+  } else {
+    // Resume already loaded from saved state
+    const statusEl = document.getElementById('resumeStatus');
+    statusEl.className = 'status success';
+    statusEl.textContent = `Resume loaded (${resumeFormat.toUpperCase()})`;
+    
+    const latexSection = document.getElementById('latexSection');
+    if (isLaTeX) {
+      latexSection.style.display = 'block';
     }
   }
 });
@@ -112,6 +181,7 @@ document.getElementById('reloadResume').addEventListener('click', async () => {
         savedResume: resumeData,
         savedResumeFormat: resumeFormat
       });
+      saveState();
       
       statusEl.className = 'status success';
       statusEl.textContent = `Resume reloaded: ${data.filename} (${resumeFormat.toUpperCase()})`;
@@ -132,77 +202,6 @@ document.getElementById('reloadResume').addEventListener('click', async () => {
   }
 });
 
-// Resume is automatically loaded from resumes/original/ directory via backend
-// Removed file upload - resume is auto-loaded on extension open
-/*
-document.getElementById('resumeFile').addEventListener('change', async (e) => {
-  const files = e.target.files;
-  if (!files || files.length === 0) return;
-
-  const statusEl = document.getElementById('resumeStatus');
-  statusEl.className = 'status info';
-  statusEl.textContent = 'Reading resume...';
-
-  try {
-    // Find the main .tex file (prioritize files named resume.tex, main.tex, or the first .tex file)
-    let mainTexFile = null;
-    const texFiles = Array.from(files).filter(f => f.name.endsWith('.tex'));
-    
-    if (texFiles.length === 0) {
-      // If no .tex files, try to read the first file
-      mainTexFile = files[0];
-    } else {
-      // Prefer resume.tex or main.tex, otherwise use first .tex file
-      mainTexFile = texFiles.find(f => 
-        f.name.toLowerCase() === 'resume.tex' || 
-        f.name.toLowerCase() === 'main.tex'
-      ) || texFiles[0];
-    }
-
-    if (!mainTexFile) {
-      throw new Error('No .tex file found. Please select a folder containing your LaTeX resume.');
-    }
-
-    const text = await mainTexFile.text();
-    resumeData = text;
-    
-    // Detect LaTeX format
-    isLaTeX = mainTexFile.name.endsWith('.tex') || 
-              text.includes('\\documentclass') || 
-              text.includes('\\begin{document}');
-    
-    resumeFormat = isLaTeX ? 'latex' : 'text';
-    
-    // Show/hide LaTeX to PDF button
-    const latexSection = document.getElementById('latexSection');
-    if (isLaTeX) {
-      latexSection.style.display = 'block';
-    } else {
-      latexSection.style.display = 'none';
-    }
-    
-    // Save resume to Chrome storage for future use
-    chrome.storage.local.set({
-      savedResume: resumeData,
-      savedResumeFormat: resumeFormat,
-      mainTexFileName: mainTexFile.name
-    });
-    
-    const fileCount = files.length > 1 ? ` (${files.length} files in folder)` : '';
-    statusEl.className = 'status success';
-    statusEl.textContent = `Resume loaded: ${mainTexFile.name}${fileCount} (${resumeFormat.toUpperCase()})`;
-    
-    if (files.length > 1) {
-      statusEl.textContent += `\nNote: Only ${mainTexFile.name} will be optimized. Copy optimized file back to your folder structure.`;
-    }
-  } catch (error) {
-    statusEl.className = 'status error';
-    statusEl.textContent = `Error: ${error.message}`;
-    console.error('Resume read error:', error);
-  }
-});
-*/
-
 // Extract job description from current page
 document.getElementById('extractJD').addEventListener('click', async () => {
   const statusEl = document.getElementById('jdStatus');
@@ -212,21 +211,17 @@ document.getElementById('extractJD').addEventListener('click', async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
-    // Check if content script is available
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
       throw new Error('Cannot extract from this page. Please navigate to a job posting page.');
     }
     
-    // Inject content script if needed and send message
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: ['content.js']
       });
-      // Wait a bit for script to initialize
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (injectError) {
-      // Script might already be injected, continue
       console.log('Script injection note:', injectError.message);
     }
     
@@ -234,6 +229,7 @@ document.getElementById('extractJD').addEventListener('click', async () => {
     
     if (response && response.success) {
       jobDescription = response.jdText;
+      saveState();
       statusEl.className = 'status success';
       statusEl.textContent = `Extracted ${jobDescription.length} characters`;
     } else {
@@ -268,7 +264,6 @@ document.getElementById('processJob').addEventListener('click', async () => {
   try {
     const backendUrl = document.getElementById('backendUrl').value;
     
-    // Use faster combined endpoint (single LLM call instead of two)
     statusEl.textContent = 'Processing job description and optimizing resume...';
     const combinedResponse = await fetch(`${backendUrl}/process-and-rewrite`, {
       method: 'POST',
@@ -277,15 +272,13 @@ document.getElementById('processJob').addEventListener('click', async () => {
         job_description: jobDescription,
         resume: resumeData,
         resume_format: resumeFormat,
-        skip_validation: false  // Set to true for even faster processing
+        skip_validation: false
       })
     });
     
     if (!combinedResponse.ok) {
-      // Fallback to old two-step process if combined endpoint fails
       console.log('Combined endpoint failed, falling back to two-step process...');
       
-      // Step 1: Parse JD
       statusEl.textContent = 'Parsing job description...';
       const parseResponse = await fetch(`${backendUrl}/parse-jd`, {
         method: 'POST',
@@ -300,7 +293,6 @@ document.getElementById('processJob').addEventListener('click', async () => {
       
       const parsedJD = await parseResponse.json();
       
-      // Step 2: Rewrite resume
       statusEl.textContent = 'Rewriting resume...';
       const rewriteResponse = await fetch(`${backendUrl}/rewrite-resume`, {
         method: 'POST',
@@ -324,13 +316,13 @@ document.getElementById('processJob').addEventListener('click', async () => {
     rewrittenResume = result.rewritten_resume;
     resumeFormat = result.resume_format || resumeFormat;
     
-    // Store in background for form filling
+    saveState();
+    
     chrome.storage.local.set({ 
       rewrittenResume: rewrittenResume,
       resumeFormat: resumeFormat
     });
     
-    // Show/hide LaTeX to PDF button based on output format
     const latexSection = document.getElementById('latexSection');
     if (resumeFormat === 'latex') {
       latexSection.style.display = 'block';
@@ -338,7 +330,6 @@ document.getElementById('processJob').addEventListener('click', async () => {
     
     statusEl.className = 'status success';
     
-    // Show detailed validation results
     let validationMsg = '';
     if (result.validation_passed) {
       validationMsg = '✓ Validation passed';
@@ -357,7 +348,6 @@ document.getElementById('processJob').addEventListener('click', async () => {
         validationMsg = '⚠ Validation warnings';
       }
       
-      // Log all changes for debugging
       console.log('Validation details:', {
         passed: result.validation_passed,
         changes: result.changes_made,
@@ -368,14 +358,12 @@ document.getElementById('processJob').addEventListener('click', async () => {
     
     statusEl.textContent = `Resume rewritten successfully! ${validationMsg}. Ready for autofill.`;
     
-    // Show detailed validation info in console and as a tooltip/title
     if (result.changes_made && result.changes_made.length > 0) {
       const details = result.changes_made.join('; ');
-      statusEl.title = details; // Hover to see details
+      statusEl.title = details;
       console.log('Validation details:', details);
     }
     
-    // Store rewritten resume for download
     chrome.storage.local.set({ 
       rewrittenResume: rewrittenResume,
       resumeFormat: resumeFormat,
@@ -407,7 +395,6 @@ document.getElementById('closeModal').addEventListener('click', () => {
   document.getElementById('latexModal').style.display = 'none';
 });
 
-// Close modal when clicking outside
 document.getElementById('latexModal').addEventListener('click', (e) => {
   if (e.target.id === 'latexModal') {
     document.getElementById('latexModal').style.display = 'none';
@@ -499,7 +486,6 @@ document.getElementById('convertToPDF').addEventListener('click', async () => {
       throw new Error(errorData.detail || `PDF conversion failed: ${pdfResponse.statusText}`);
     }
     
-    // Download the PDF
     const blob = await pdfResponse.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');

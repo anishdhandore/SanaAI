@@ -6,7 +6,8 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
@@ -22,8 +23,13 @@
       "run_at": "document_idle"
     }
   ],
+        "web_accessible_resources": [
+          {
+            "resources": ["panel.js", "form-filler.js"],
+            "matches": ["<all_urls>"]
+          }
+        ],
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
