@@ -21,11 +21,21 @@ ENV/
 .env.local
 backend/.env
 
-# Resume files (optional - remove if you want to track them)
-resumes/*.tex
-resumes/*.pdf
-resumes/*.txt
-!resumes/README.md
+# Sensitive personal information
+# User profiles containing personal data (name, email, phone, address, etc.)
+backend/profiles/
+backend/profiles/*.json
+
+# Resume files - contains personal work history and information
+backend/resumes/
+backend/resumes/**/*
+!backend/resumes/.gitkeep
+
+# Any other personal data files
+*.resume
+*.cv
+*_resume.*
+*_cv.*
 
 # OS
 .DS_Store
